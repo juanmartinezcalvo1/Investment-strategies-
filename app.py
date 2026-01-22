@@ -46,14 +46,21 @@ STRATEGY_INFO = {
 st.title("Systematic Trading Strategies")
 st.write("Interactive visualization of systematic investment strategies.")
 
+today = dt.date.today()
+default_end = today - dt.timedelta(days=1)  # safer than "today" (timezone / market close issues)
+
 # --- Sidebar controls ---
 with st.sidebar:
     st.header("Data")
-    ticker = st.text_input("Ticker", "SPY")
+    ticker = st.text_input("Ticker", "SPY").strip().upper()
 
-    # Default dates so the app works immediately
     start_date = st.date_input("Start date", value=dt.date(2018, 1, 1))
-    end_date = st.date_input("End date", value=dt.date.today())
+    end_date = st.date_input("End date", value=default_end)
+
+    # Clamp future end dates automatically
+    if end_date > today:
+        st.info("End date was in the future — adjusted to today.")
+        end_date = today
 
     st.header("Strategy")
     strategy_name = st.selectbox(
@@ -93,22 +100,37 @@ with st.sidebar:
     else:
         strategy = AllInStrategy()
 
-# --- Data download ---
+# --- Date validation ---
 if start_date >= end_date:
     st.error("Start date must be earlier than end date.")
     st.stop()
 
+# --- Data download ---
 data = yf.download(ticker, start=start_date, end=end_date, progress=False)
 
-if data.empty or "Adj Close" not in data.columns:
-    st.error("No data returned. Check the ticker or date range.")
+if data is None or data.empty:
+    st.error(
+        f"No data returned for **{ticker}** between **{start_date}** and **{end_date}**. "
+        "Try a different ticker or a longer date range."
+    )
     st.stop()
 
-prices = data["Adj Close"].dropna()
+price_col = "Adj Close" if "Adj Close" in data.columns else ("Close" if "Close" in data.columns else None)
+if price_col is None:
+    st.error("Downloaded data does not contain 'Adj Close' or 'Close'.")
+    st.stop()
+
+prices = data[price_col].dropna()
+if prices.empty:
+    st.error("Price series is empty after dropping missing values.")
+    st.stop()
 
 # Show basic data info (pro touch)
-st.caption(f"Loaded **{len(prices)}** daily observations for **{ticker}** "
-           f"from **{prices.index.min().date()}** to **{prices.index.max().date()}**.")
+st.caption(
+    f"Loaded **{len(prices)}** daily observations for **{ticker}** "
+    f"from **{prices.index.min().date()}** to **{prices.index.max().date()}** "
+    f"(source: Yahoo Finance, column: {price_col})."
+)
 
 if len(prices) < 50:
     st.warning("Not enough data. Please choose a longer date range (at least 50 observations).")
@@ -124,7 +146,7 @@ with tab1:
     fig_price = go.Figure()
     fig_price.add_trace(go.Scatter(x=prices.index, y=result["price"], name="Price"))
     fig_price.update_layout(
-        title="Price (Adjusted Close)",
+        title=f"Price ({price_col})",
         xaxis_title="Date",
         yaxis_title="Price"
     )
@@ -144,4 +166,5 @@ with tab2:
 c1, c2 = st.columns(2)
 c1.metric("Total Return", f"{metrics['total_return']*100:.2f}%")
 c2.metric("Max Drawdown", f"{metrics['max_drawdown']*100:.2f}%")
+
 
